@@ -6,6 +6,8 @@ import os
 import plotly.graph_objs as go
 from collections import deque
 import logging
+import numpy as np
+import pandas as pd
 
 # Load or initialize configuration
 config_file = "config.json"
@@ -26,7 +28,7 @@ def load_config():
         with open(config_file, "r") as f:
             return json.load(f)
     except FileNotFoundError:
-        print("config not found")
+        logging.error("config not found")
         return default_config
 
 # Save configuration
@@ -47,30 +49,6 @@ app.layout = html.Div([
     html.Div(id="page-content")
 ])
 
-# History for main dashboard (deque for fixed-size storage)
-history = {
-    "time": deque(maxlen=config["num_points"]),
-    "control_module_voltage": deque(maxlen=config["num_points"]),
-    "engine_rpm": deque(maxlen=config["num_points"]),
-    "engine_coolant_temp": deque(maxlen=config["num_points"])
-}
-
-# Headers for output
-headers = {
-    "time": "Time",
-    "control_module_voltage": "Control Module Voltage",
-    "engine_rpm": "Engine RPM",
-    "engine_coolant_temp": "Engine Coolant Temp"    
-}
-
-# Units for output
-units = {
-    "time": "s",
-    "control_module_voltage": "V",
-    "engine_rpm": "RPM",
-    "engine_coolant_temp": "degrees C"    
-}
-
 # Find the most recent CSV file
 def get_most_recent_csv(directory):
     try:
@@ -81,26 +59,45 @@ def get_most_recent_csv(directory):
     except Exception as e:
         return None
 
-# Fetch the latest data
 def get_data():
     try:
         csv_file = get_most_recent_csv(config["log_path"])
         if not csv_file:
-            return {}
+            return []
+        
+        '''
         with open(csv_file, "rb") as f:
-            f.seek(-2, os.SEEK_END)
-            while f.read(1) != b"\n":
-                f.seek(-2, os.SEEK_CUR)
-            last_line = f.readline().decode().strip()
-        data = last_line.split(",")
-        return {
-            "time": float(data[0]),
-            "control_module_voltage": float(data[2]),
-            "engine_rpm": float(data[3]),
-            "engine_coolant_temp": float(data[4])
-        }
+            f.seek(0, os.SEEK_END)
+            end_position = f.tell()
+            buffer_size = 1024
+            lines = []
+            while len(lines) <= 50 and f.tell() > 0:
+                f.seek(max(f.tell() - buffer_size, 0), os.SEEK_SET)
+                chunk = f.read(min(buffer_size, f.tell()))
+                lines = chunk.split(b"\n") + lines
+                f.seek(max(f.tell() - buffer_size, 0), os.SEEK_SET)
+        '''
+        data = pd.read_csv(csv_file,skiprows=1,dtype=np.float32)
+        return data.tail(config['num_points'])
+        
+
+        #    last_50_lines = [line.decode().strip() for line in lines if line.strip()][-50:]
+        '''
+        parsed_data = {"time":[],"control_module_voltage":[],"engine_rpm":[],"engine_coolant_temp":[]}
+        for line in last_50_lines:
+            data = line.split(",")
+            parsed_data["time"].append(float(data[0]))
+            parsed_data["control_module_voltage"].append(float(data[2]))
+            parsed_data["engine_rpm"].append(float(data[3]))
+            parsed_data["engine_coolant_temp"].append(float(data[4]))
+#        print(parsed_data)
+        return parsed_data
+        '''
+
     except Exception as e:
-        return {}
+        logging.error(e)
+        return []
+
 
 # Configuration Page Layout
 def config_page():
@@ -161,11 +158,6 @@ def config_page():
 # Main Dashboard Layout
 def dashboard_page():
     # Generate Line Charts and outputs
-    graphs = []
-    for key in history.keys():
-        if key != 'time':
-            graphs.append(dcc.Graph(id=f'{key}-usage-graph'))
-
     return html.Div([
         html.H1('System Monitoring Dashboard'),
 
@@ -182,10 +174,16 @@ def dashboard_page():
 
 
 # Update Graphs
+graphs = []
 outputs = []
-for key in history.keys():
-    if key != 'time':
-        outputs.append(Output(f'{key}-usage-graph', 'figure'))
+csv_file = get_most_recent_csv(config["log_path"])
+if not csv_file:
+    exit()
+output_keys = pd.read_csv(csv_file,skiprows=1).keys()
+for key in output_keys:
+    if key == output_keys[0]: continue
+    graphs.append(dcc.Graph(id=f'{key}-usage-graph'))
+    outputs.append(Output(f'{key}-usage-graph', 'figure'))
 @app.callback(
     outputs,
     [Input('interval-component', 'n_intervals')]
@@ -194,32 +192,30 @@ def update_dashboard(n):
     # Fetch system stats (RAM, CPU, and Disk)
     data = get_data()
 
-    if not data:
+    if data.empty:
         logging.info("No data fetched")
-        return [None] * len(history.keys())
+        return [None] * len(outputs)
 
     # Log fetched data in the terminal
     logging.info(f"Fetched data: {data}")
 
     figures = []
-    for key in history.keys():
-        history[key].append(data[key])
-        
-        # Create Line Charts
-        if key != 'time':
-            figures.append({
-                'data': [go.Scatter(
-                    x=list(history['time']),
-                    y=list(history[key]),
-                    mode='lines+markers',
-                    name=f'{key}'
-                )],
-                'layout': go.Layout(
-                    title=f'{headers[key]}',
-                    xaxis=dict(title='Time (s)', tickformat='%H:%M:%S'),  # Format the time
-                    yaxis=dict(title=f'{units[key]}'),
-                )
-            })
+    time_column = data.columns[0]  # Assume the first column is time
+    for key in data.columns[1:]:
+        figures.append({
+            'data': [go.Scatter(
+                x=data[time_column],
+                y=data[key],
+                mode='lines+markers',
+                name=key
+            )],
+            'layout': go.Layout(
+                title=key,
+                xaxis=dict(title='Time', tickformat='%H:%M:%S'),
+                yaxis=dict(title=key)
+            )
+        })
+
     return figures
 
 # Save Configuration
