@@ -8,18 +8,24 @@ from collections import deque
 import logging
 import numpy as np
 import pandas as pd
+import torch
+from torch import nn
+from model import EngineLSTM, predict
 
 # Load or initialize configuration
 config_file = "config.json"
 default_config = {
     "log_path": "data/",
-    "input_sequence_length": 50,
-    "output_sequence_length": 50,
+    "update_interval": 1000,
+    
+    "input_sequence_length": 80,
+    "output_sequence_length": 20,
+    "hidden_size": 64,
+    "num_layers": 2,
+    
     "batch_size": 32,
-    "num_epochs": 10,
-    "learning_rate": 0.001,
-    "num_points": 20,
-    "update_interval": 1000
+    "num_epochs": 25,
+    "learning_rate": 0.001
 }
 
 # Load configuration
@@ -28,7 +34,9 @@ def load_config():
         with open(config_file, "r") as f:
             return json.load(f)
     except FileNotFoundError:
-        logging.error("config not found")
+        logging.error("Config not found")
+        logging.info("Saving default config")
+        save_config(default_config)
         return default_config
 
 # Save configuration
@@ -65,35 +73,9 @@ def get_data():
         if not csv_file:
             return []
         
-        '''
-        with open(csv_file, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            end_position = f.tell()
-            buffer_size = 1024
-            lines = []
-            while len(lines) <= 50 and f.tell() > 0:
-                f.seek(max(f.tell() - buffer_size, 0), os.SEEK_SET)
-                chunk = f.read(min(buffer_size, f.tell()))
-                lines = chunk.split(b"\n") + lines
-                f.seek(max(f.tell() - buffer_size, 0), os.SEEK_SET)
-        '''
         data = pd.read_csv(csv_file,skiprows=1,dtype=np.float32)
-        return data.tail(config['num_points'])
+        return data.tail(config['input_sequence_length'])
         
-
-        #    last_50_lines = [line.decode().strip() for line in lines if line.strip()][-50:]
-        '''
-        parsed_data = {"time":[],"control_module_voltage":[],"engine_rpm":[],"engine_coolant_temp":[]}
-        for line in last_50_lines:
-            data = line.split(",")
-            parsed_data["time"].append(float(data[0]))
-            parsed_data["control_module_voltage"].append(float(data[2]))
-            parsed_data["engine_rpm"].append(float(data[3]))
-            parsed_data["engine_coolant_temp"].append(float(data[4]))
-#        print(parsed_data)
-        return parsed_data
-        '''
-
     except Exception as e:
         logging.error(e)
         return []
@@ -109,6 +91,11 @@ def config_page():
             dcc.Input(id="log_path", type="text", value=config["log_path"],
             style={"width": "500px"})
         ], style={"marginBottom": "5px"}),
+        
+        html.Div([
+            html.Label("Update Interval: "),
+            dcc.Input(id="update_interval", type="number", value=config["update_interval"], step=50)
+        ], style={"marginBottom": "10px"}),
 
         html.Div([
             html.Label("Input Sequence Length: "),
@@ -118,6 +105,16 @@ def config_page():
         html.Div([
             html.Label("Output Sequence Length: "),
             dcc.Input(id="output_sequence_length", type="number", value=config["output_sequence_length"])
+        ], style={"marginBottom": "5px"}),
+        
+        html.Div([
+            html.Label("Hidden Layer Size: "),
+            dcc.Input(id="hidden_size", type="number", value=config["hidden_size"])
+        ], style={"marginBottom": "5px"}),
+
+        html.Div([
+            html.Label("Number of Layers: "),
+            dcc.Input(id="num_layers", type="number", value=config["num_layers"])
         ], style={"marginBottom": "5px"}),
 
         html.Div([
@@ -134,16 +131,6 @@ def config_page():
             html.Label("Learning Rate: "),
             dcc.Input(id="learning_rate", type="number", value=config["learning_rate"], step=0.0001)
         ], style={"marginBottom": "5px"}),
-
-        html.Div([
-            html.Label("Number of Points: "),
-            dcc.Input(id="num_points", type="number", value=config["num_points"])
-        ], style={"marginBottom": "10px"}),
-        
-        html.Div([
-            html.Label("Update Interval: "),
-            dcc.Input(id="update_interval", type="number", value=config["update_interval"], step=50)
-        ], style={"marginBottom": "10px"}),
 
         html.Button("Save Configuration", id="save_config", style={"marginTop": "20px"}),
 
@@ -184,31 +171,52 @@ for key in output_keys:
     if key == output_keys[0]: continue
     graphs.append(dcc.Graph(id=f'{key}-usage-graph'))
     outputs.append(Output(f'{key}-usage-graph', 'figure'))
+
+# Fetch pretrained model files    
+models = {}
+for output in output_keys[1:]:
+    model_name = output.split('(')[0].strip().replace(' ','_')
+    
+    model = EngineLSTM(input_size=1, hidden_size=config['hidden_size'], num_layers=config['num_layers'], output_size=config['output_sequence_length'])
+    model.load_state_dict(torch.load(f"models/{model_name}_model.pth", weights_only=False))    
+
+    models[output] = model
+
 @app.callback(
     outputs,
     [Input('interval-component', 'n_intervals')]
 )
 def update_dashboard(n):
-    # Fetch system stats (RAM, CPU, and Disk)
+    # Fetch data
     data = get_data()
-
     if data.empty:
         logging.info("No data fetched")
         return [None] * len(outputs)
 
     # Log fetched data in the terminal
     logging.info(f"Fetched data: {data}")
-
+    
     figures = []
     time_column = data.columns[0]  # Assume the first column is time
+    time_data = data[time_column]
     for key in data.columns[1:]:
+        model = models[key]
+        predictions = predict(data[key].values, model) # Predict future values
+        predictions = np.insert(predictions, 0, data[key].iloc[-1]) # Set the first point to the last real datapoint
+
+        # Create future time values for predictions         
+        time_intervals = time_data.diff().iloc[1:]  # Calculate intervals
+        mean_time_per_point = np.mean(time_intervals)
+        pred_time_start = time_data.iloc[-1]
+        pred_time_end = pred_time_start + config["output_sequence_length"] * mean_time_per_point
+        predictions_time = np.linspace(pred_time_start, pred_time_end, len(predictions))
+        
+        # Create figures
         figures.append({
-            'data': [go.Scatter(
-                x=data[time_column],
-                y=data[key],
-                mode='lines+markers',
-                name=key
-            )],
+            'data': [
+                go.Scatter(x=time_data,y=data[key],mode='lines+markers',name=f'{key} Inputs'),
+                go.Scatter(x=predictions_time,y=predictions,mode='lines+markers',name=f'{key} Predictions')
+            ],
             'layout': go.Layout(
                 title=key,
                 xaxis=dict(title='Time', tickformat='%H:%M:%S'),
@@ -223,27 +231,36 @@ def update_dashboard(n):
     Output("save_feedback", "children"),
     [Input("save_config", "n_clicks")],
     [
+        # Dashboard Parameters
         State("log_path", "value"),
+        State("update_interval", "value"),
+        
+        # Model Parameters
         State("input_sequence_length", "value"),
         State("output_sequence_length", "value"),
+        State("hidden_size", "value"),
+        State("num_layers", "value"),
+
+        # Training parameters
         State("batch_size", "value"),
         State("num_epochs", "value"),
         State("learning_rate", "value"),
-        State("num_points", "value"),
-        State("update_interval", "value")
+        
+        
     ]
 )
-def save_configuration(n_clicks, log_path, input_seq_len, output_seq_len, batch_size, num_epochs, learning_rate, num_points, update_interval):
+def save_configuration(n_clicks, log_path, update_interval, input_seq_len, output_seq_len, hidden_size, num_layers, batch_size, num_epochs, learning_rate):
     if n_clicks:
         new_config = {
             "log_path": log_path,
+            "update_interval": update_interval,
             "input_sequence_length": input_seq_len,
             "output_sequence_length": output_seq_len,
+            "hidden_size": hidden_size,
+            "num_layers": num_layers,
             "batch_size": batch_size,
             "num_epochs": num_epochs,
-            "learning_rate": learning_rate,
-            "num_points": num_points,
-            "update_interval": update_interval
+            "learning_rate": learning_rate
         }
         save_config(new_config)
         config = new_config

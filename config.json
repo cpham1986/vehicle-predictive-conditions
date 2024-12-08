@@ -1,10 +1,12 @@
 {
-    "log_path": "C:\\Users\\chris\\Documents\\GitHub\\vehicle-predictive-conditions\\data",
-    "input_sequence_length": 50,
-    "output_sequence_length": 50,
+    "log_path": "data/",
+    "num_points": 20,
+    "update_interval": 1000,
+    "input_sequence_length": 80,
+    "output_sequence_length": 20,
+    "hidden_size": 64,
+    "num_layers": 2,
     "batch_size": 32,
-    "num_epochs": 10,
-    "learning_rate": 0.001,
-    "num_points": 50,
-    "update_interval": 200
+    "num_epochs": 25,
+    "learning_rate": 0.001
 }
