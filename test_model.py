@@ -8,6 +8,7 @@ from sklearn.preprocessing import MinMaxScaler
 import numpy as np
 import sys
 from app import load_config
+import os
 
 # Load the configuration
 config = load_config()
@@ -30,6 +31,7 @@ def prepare_time_series_data(data, input_seq_len, output_seq_len):
     return torch.tensor(np.array(X), dtype=torch.float32), torch.tensor(np.array(y), dtype=torch.float32)
 
 def make_train_model(model_data_in, model_name):
+
     # Normalize data
     scaler = MinMaxScaler(feature_range=(0, 1))
     model_data = scaler.fit_transform(model_data_in.reshape(-1, 1)).flatten()
@@ -47,6 +49,8 @@ def make_train_model(model_data_in, model_name):
 
     # Model and optimizer
     model = EngineLSTM(1, hidden_size, num_layers, output_size)
+    if os.path.exists(f"models/{model_name}_model.pth"):
+        model.load_state_dict(torch.load(f"models/{model_name}_model.pth", weights_only=False))
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -133,19 +137,19 @@ def eval_model(model, model_name, test_loader, scaler, criterion):
     plt.show()  # Ensure the plots are displayed
 
 
-if 0 and len(sys.argv) == 1:
+if len(sys.argv) == 1:
     print(f"Usage: python3 {sys.argv[0]} <data_file_name>.csv")
     sys.exit()
-#csv_file = sys.argv[1]
-
-csv_file = "data/CSVLog_20241207_131020.csv"
+csv_file = sys.argv[1]
+#csv_file = "data/CSVLog_20241207_131020.csv"
 data = pd.read_csv(csv_file,skiprows=1)
+if(len(data) < input_size + output_size):
+    print(f"Too little samples in this file! Has {len(data)}, need at least {input_size + output_size}")
+    sys.exit()
 
 for col in data.columns[1:]:
     name = col.split('(')[0].strip().replace(' ','_')
     print(name)
-    #print(data[col])
     make_train_model(data[col].values, name)
-
 
 plt.show()

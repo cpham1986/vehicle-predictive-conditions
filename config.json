@@ -1,7 +1,6 @@
 {
     "log_path": "data/",
-    "num_points": 20,
-    "update_interval": 1000,
+    "update_interval": 10000,
     "input_sequence_length": 80,
     "output_sequence_length": 20,
     "hidden_size": 64,
