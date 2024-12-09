@@ -89,7 +89,7 @@ def eval_model(model, model_name, test_loader, scaler, criterion):
             predictions.extend(outputs.numpy())
             actuals.extend(batch_y.numpy())
 
-    print(f"Test Loss: {test_loss / len(test_loader):.4f}")
+    print(f"Test Loss: {test_loss / len(test_loader):.6f}")
 
     # Inverse scaling
     x = scaler.inverse_transform(np.array(x).reshape(-1, 1)).flatten()
@@ -134,7 +134,8 @@ def eval_model(model, model_name, test_loader, scaler, criterion):
         ax.grid(True)
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])  # Adjust spacing to fit the title
-    plt.show()  # Ensure the plots are displayed
+    #plt.show()  # Ensure the plots are displayed
+    plt.savefig(f"plots/{model_name}_model.png")
 
 
 if len(sys.argv) == 1:
@@ -151,5 +152,3 @@ for col in data.columns[1:]:
     name = col.split('(')[0].strip().replace(' ','_')
     print(name)
     make_train_model(data[col].values, name)
-
-plt.show()

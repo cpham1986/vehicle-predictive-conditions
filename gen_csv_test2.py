@@ -1,9 +1,10 @@
 import os
 import pandas as pd
 import time
+from app import get_most_recent_csv
 
 try:
-    with open('data\\CSVLog_20241206_075200.csv') as f_in:
+    with open(get_most_recent_csv("data/")) as f_in:
         lines = f_in.readlines()
         
     for line in lines:
