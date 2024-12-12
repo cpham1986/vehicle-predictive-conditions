@@ -49,7 +49,7 @@ config = load_config()
 
 # Initialize Dash app
 app = dash.Dash(__name__, suppress_callback_exceptions=True)
-app.title = "System Monitoring"
+app.title = "Vehicle Condition Monitoring"
 
 # App Layout
 app.layout = html.Div([

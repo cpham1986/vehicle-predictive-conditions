@@ -7,11 +7,12 @@ from math import ceil
 from sklearn.preprocessing import MinMaxScaler
 import numpy as np
 import sys
-from app import load_config
+import json
 import os
 
 # Load the configuration
-config = load_config()
+with open("config.json", "r") as f:
+    config = json.load(f)
 input_size = config['input_sequence_length']
 hidden_size = config['hidden_size']
 num_layers = config['num_layers']
@@ -142,7 +143,6 @@ if len(sys.argv) == 1:
     print(f"Usage: python3 {sys.argv[0]} <data_file_name>.csv")
     sys.exit()
 csv_file = sys.argv[1]
-#csv_file = "data/CSVLog_20241207_131020.csv"
 data = pd.read_csv(csv_file,skiprows=1)
 if(len(data) < input_size + output_size):
     print(f"Too little samples in this file! Has {len(data)}, need at least {input_size + output_size}")
